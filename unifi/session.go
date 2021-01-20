@@ -74,16 +74,16 @@ type Session struct {
 	password string
 	csrf     string
 	client   *http.Client
-	login    func() (string, error)
+	login    func() (*Account, error)
 	err      error
 }
 
 // Login performs authentication with the UniFi server, and stores the
 // http credentials.
-func (s *Session) Login() (string, error) {
+func (s *Session) Login() (*Account, error) {
 	if s.login == nil {
-		s.login = func() (string, error) {
-			return "", ErrUnInitialized
+		s.login = func() (*Account, error) {
+			return nil, ErrUnInitialized
 		}
 	}
 
@@ -119,49 +119,54 @@ func (s *Session) ListDevices() ([]Device, error) {
 	return devices, nil
 }
 
-// Kick disconnects a connected client, identified by MAC address.
-func (s *Session) Kick(mac string) (string, error) {
-	return s.macAction("kick-sta", mac)
-}
-
 // Block prevents a specific client (identified by MAC) from connecting
 // to the UniFi network.
-func (s *Session) Block(mac string) (string, error) {
+func (s *Session) Block(mac string) ([]Device, error) {
 	return s.macAction("block-sta", mac)
 }
 
 // Unblock re-enables a specific client.
-func (s *Session) Unblock(mac string) (string, error) {
+func (s *Session) Unblock(mac string) ([]Device, error) {
 	return s.macAction("unblock-sta", mac)
 }
 
-func (s *Session) macAction(action, mac string) (string, error) {
-	if b, err := s.login(); err != nil {
-		return b, err
+func (s *Session) macAction(action, mac string) ([]Device, error) {
+	if _, err := s.login(); err != nil {
+		return nil, err
 	}
 
 	u, err := url.Parse(fmt.Sprintf("%s/proxy/network/api/s/default/cmd/stamgr", s.endpoint))
 	if err != nil {
-		return "", s.setError(err)
+		return nil, s.setError(err)
 	}
 
 	r := bytes.NewBufferString(fmt.Sprintf(`{"cmd":%q,"mac":%q}`, action, mac))
 
-	return s.post(u, r)
+	b, err := s.post(u, r)
+	if err != nil {
+		return nil, s.setError(err)
+	}
+
+	resp := &Response{}
+	if err := json.NewDecoder(bytes.NewReader(b)).Decode(&resp); err != nil {
+		return nil, s.setError(err)
+	}
+
+	return resp.Data, nil
 }
 
-func (s *Session) get(u fmt.Stringer) (string, error) {
+func (s *Session) get(u fmt.Stringer) ([]byte, error) {
 	return s.verb("GET", u, nil)
 }
 
-func (s *Session) post(u fmt.Stringer, body io.Reader) (string, error) {
+func (s *Session) post(u fmt.Stringer, body io.Reader) ([]byte, error) {
 	return s.verb("POST", u, body)
 }
 
-func (s *Session) verb(verb string, u fmt.Stringer, body io.Reader) (string, error) {
+func (s *Session) verb(verb string, u fmt.Stringer, body io.Reader) ([]byte, error) {
 	req, err := http.NewRequestWithContext(context.Background(), verb, u.String(), body)
 	if err != nil {
-		return "", s.setError(err)
+		return nil, s.setError(err)
 	}
 
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
@@ -174,7 +179,7 @@ func (s *Session) verb(verb string, u fmt.Stringer, body io.Reader) (string, err
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return "", s.setError(err)
+		return nil, s.setError(err)
 	}
 
 	defer resp.Body.Close()
@@ -185,24 +190,24 @@ func (s *Session) verb(verb string, u fmt.Stringer, body io.Reader) (string, err
 
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return "", s.setError(err)
+		return nil, s.setError(err)
 	}
 
 	if resp.StatusCode < http.StatusOK || http.StatusBadRequest <= resp.StatusCode {
 		_ = s.setErrorString(http.StatusText(resp.StatusCode))
 	}
 
-	return string(respBody), s.err
+	return respBody, s.err
 }
 
-func (s *Session) webLogin() (string, error) {
+func (s *Session) webLogin() (*Account, error) {
 	if s.err != nil {
-		return "", s.err
+		return nil, s.err
 	}
 
 	u, err := url.Parse(fmt.Sprintf("%s/api/auth/login", s.endpoint))
 	if err != nil {
-		return "", s.setError(err)
+		return nil, s.setError(err)
 	}
 
 	r := bytes.NewBufferString(
@@ -210,12 +215,15 @@ func (s *Session) webLogin() (string, error) {
 			`{"username":%q,"password":%q,"strict":"true","remember":"true"}`,
 			s.username, s.password))
 
-	respBody, err := s.post(u, r)
-	if err == nil {
-		s.login = func() (string, error) { return respBody, nil }
+	var acct *Account
+	if body, err := s.post(u, r); err == nil {
+		acct = &Account{}
+		if err = json.NewDecoder(bytes.NewReader(body)).Decode(acct); err == nil {
+			s.login = func() (*Account, error) { return acct, nil }
+		}
 	}
 
-	return respBody, err
+	return acct, err
 }
 
 func (s *Session) setError(e error) error {

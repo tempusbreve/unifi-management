@@ -66,16 +66,19 @@ func main() {
 func unBlockDevice(s *unifi.Session) func(unifi.Device) { return fnDevice(s.Unblock) }
 func blockDevice(s *unifi.Session) func(unifi.Device)   { return fnDevice(s.Block) }
 
-func fnDevice(fn func(string) (string, error)) func(unifi.Device) {
+func fnDevice(fn func(string) ([]unifi.Device, error)) func(unifi.Device) {
 	return func(d unifi.Device) {
 		res, err := fn(d.MAC)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%v error; %v", d.DisplayName(), err)
+			fmt.Fprintf(os.Stderr, "%v error; %v\n", d.DisplayName(), err)
 
 			return
 		}
 
-		fmt.Fprintf(os.Stdout, "%v: %v", d.DisplayName(), res)
+		fmt.Fprintf(os.Stdout, "%v:\n", d.DisplayName())
+		for _, dev := range res {
+			fmt.Fprintf(os.Stdout, "  %v\n", dev)
+		}
 	}
 }
 
