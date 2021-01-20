@@ -10,7 +10,8 @@ Use environment variables `UNIFI_ENDPOINT`, `UNIFI_USERNAME`, and `UNIFI_PASSWOR
 
 To build the CLI: `go build ./cmd/uncli`
 
-CLI usage: ```sh
+CLI usage: 
+```sh
 $ uncli list                    # show "known" devices
 $ uncli block name [... name]   # block devices matching name(s) 
 $ uncli unblock name [... name] # unblock devices matching name(s) 
